@@ -90,7 +90,9 @@ module OpenTelemetry.Trace (
   TracerProvider,
   initializeGlobalTracerProvider,
   initializeTracerProvider,
+  initializeTracerProviderCustomService,
   getTracerProviderInitializationOptions,
+  getTracerProviderInitializationOptionsCustomService,
   getTracerProviderInitializationOptions',
   shutdownTracerProvider,
 
@@ -161,7 +163,7 @@ import OpenTelemetry.Baggage (decodeBaggageHeader)
 import qualified OpenTelemetry.Baggage as Baggage
 import OpenTelemetry.Context (Context)
 import OpenTelemetry.Exporter (Exporter)
-import OpenTelemetry.Exporter.OTLP (loadExporterEnvironmentVariables, otlpExporter)
+import OpenTelemetry.Exporter.OTLP (OTLPExporterConfig (..), emptyOTLPExporterConfig, loadExporterEnvironmentVariables, otlpExporter)
 import OpenTelemetry.Processor (Processor)
 import OpenTelemetry.Processor.Batch (BatchTimeoutConfig (..), batchProcessor, batchTimeoutConfig)
 import OpenTelemetry.Propagator (Propagator)
@@ -320,24 +322,37 @@ initializeTracerProvider = do
   (processors, opts) <- getTracerProviderInitializationOptions
   createTracerProvider processors opts
 
+initializeTracerProviderCustomService :: T.Text -> T.Text -> IO TracerProvider
+initializeTracerProviderCustomService otlpEndpoint' serviceName = do
+  (processors, opts) <- getTracerProviderInitializationOptionsCustomService otlpEndpoint' serviceName
+  createTracerProvider processors opts
+
 
 getTracerProviderInitializationOptions :: IO ([Processor], TracerProviderOptions)
-getTracerProviderInitializationOptions = getTracerProviderInitializationOptions' (mempty :: Resource 'Nothing)
+getTracerProviderInitializationOptions = getTracerProviderInitializationOptions' emptyOTLPExporterConfig Nothing (mempty :: Resource 'Nothing)
+
+
+getTracerProviderInitializationOptionsCustomService :: T.Text -> T.Text -> IO ([Processor], TracerProviderOptions)
+getTracerProviderInitializationOptionsCustomService otlpEndpoint' customName =
+  getTracerProviderInitializationOptions'
+    (emptyOTLPExporterConfig { otlpEndpoint = Just (T.unpack otlpEndpoint') })
+    (Just customName)
+    (mempty :: Resource 'Nothing)
 
 
 {- | Detect options for initializing a tracer provider from the app environment, taking additional supported resources as well.
 
  @since 0.0.3.1
 -}
-getTracerProviderInitializationOptions' :: (ResourceMerge 'Nothing any ~ 'Nothing) => Resource any -> IO ([Processor], TracerProviderOptions)
-getTracerProviderInitializationOptions' rs = do
+getTracerProviderInitializationOptions' :: (ResourceMerge 'Nothing any ~ 'Nothing) => OTLPExporterConfig -> Maybe T.Text -> Resource any -> IO ([Processor], TracerProviderOptions)
+getTracerProviderInitializationOptions' otlpExporterConfig customName rs = do
   sampler <- detectSampler
   attrLimits <- detectAttributeLimits
   spanLimits <- detectSpanLimits
   propagators <- detectPropagators
   processorConf <- detectBatchProcessorConfig
-  exporters <- detectExporters
-  builtInRs <- detectBuiltInResources
+  exporters <- detectExporters otlpExporterConfig
+  builtInRs <- detectBuiltInResources customName
   envVarRs <- mkResource . map Just <$> detectResourceAttributes
   let allRs = mergeResources (builtInRs <> envVarRs) rs
   processors <- case exporters of
@@ -441,13 +456,13 @@ detectSpanLimits =
     <*> readEnv "OTEL_LINK_ATTRIBUTE_COUNT_LIMIT"
 
 
-knownExporters :: [(T.Text, IO (Exporter ImmutableSpan))]
-knownExporters =
+knownExporters :: OTLPExporterConfig -> [(T.Text, IO (Exporter ImmutableSpan))]
+knownExporters otlpConfig =
   [
     ( "otlp"
     , do
-        otlpConfig <- loadExporterEnvironmentVariables
-        otlpExporter otlpConfig
+        otlpConfigEnv <- loadExporterEnvironmentVariables
+        otlpExporter (otlpConfig <> otlpConfigEnv)
     )
   , ("jaeger", error "Jaeger exporter not implemented")
   , ("zipkin", error "Zipkin exporter not implemented")
@@ -455,14 +470,14 @@ knownExporters =
 
 
 -- TODO, support multiple exporters
-detectExporters :: IO [Exporter ImmutableSpan]
-detectExporters = do
+detectExporters :: OTLPExporterConfig -> IO [Exporter ImmutableSpan]
+detectExporters otlpConfig = do
   exportersInEnv <- fmap (T.splitOn "," . T.pack) <$> lookupEnv "OTEL_TRACES_EXPORTER"
   if exportersInEnv == Just ["none"]
     then pure []
     else do
       let envExporters = fromMaybe ["otlp"] exportersInEnv
-          exportersAndRegistryEntry = map (\k -> maybe (Left k) Right $ lookup k knownExporters) envExporters
+          exportersAndRegistryEntry = map (\k -> maybe (Left k) Right $ lookup k $ knownExporters otlpConfig) envExporters
           (_notFound, exporterIntializers) = partitionEithers exportersAndRegistryEntry
       -- TODO, notFound logging
       sequence exporterIntializers
@@ -512,9 +527,9 @@ readEnv k = (>>= readMaybe) <$> lookupEnv k
 
  @since 0.0.1.0
 -}
-detectBuiltInResources :: IO (Resource 'Nothing)
-detectBuiltInResources = do
-  svc <- detectService
+detectBuiltInResources :: Maybe T.Text -> IO (Resource 'Nothing)
+detectBuiltInResources customName= do
+  svc <- detectService customName
   processInfo <- detectProcess
   osInfo <- detectOperatingSystem
   host <- detectHost

@@ -32,6 +32,7 @@
 module OpenTelemetry.Exporter.OTLP (
   -- * Initializing the exporter
   otlpExporter,
+  emptyOTLPExporterConfig,
 
   -- * Configuring the exporter
   OTLPExporterConfig (..),
@@ -126,6 +127,60 @@ data OTLPExporterConfig = OTLPExporterConfig
   , otlpTracesProtocol :: Maybe Protocol
   , otlpMetricsProtocol :: Maybe Protocol
   }
+
+
+instance Semigroup OTLPExporterConfig where
+  (<>) (OTLPExporterConfig a1 b1 c1 d1 e1 f1 g1 h1 i1 j1 k1 l1 m1 n1 o1 p1 q1 u1 r1 s1 t1)
+       (OTLPExporterConfig a2 b2 c2 d2 e2 f2 g2 h2 i2 j2 k2 l2 m2 n2 o2 p2 q2 u2 r2 s2 t2) =
+      let merge x y = maybe x Just y
+      in OTLPExporterConfig
+        (merge a1 a2)
+        (merge b1 b2)
+        (merge c1 c2)
+        (merge d1 d2)
+        (merge e1 e2)
+        (merge f1 f2)
+        (merge g1 g2)
+        (merge h1 h2)
+        (merge i1 i2)
+        (merge j1 j2)
+        (merge k1 k2)
+        (merge l1 l2)
+        (merge m1 m2)
+        (merge n1 n2)
+        (merge o1 o2)
+        (merge p1 p2)
+        (merge q1 q2)
+        (merge u1 u2)
+        (merge r1 r2)
+        (merge s1 s2)
+        (merge t1 t2)
+
+
+emptyOTLPExporterConfig :: OTLPExporterConfig
+emptyOTLPExporterConfig =
+  OTLPExporterConfig
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
+    Nothing
 
 
 loadExporterEnvironmentVariables :: MonadIO m => m OTLPExporterConfig
